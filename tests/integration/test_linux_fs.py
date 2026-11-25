@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -70,6 +72,88 @@ def test_missing_o_path_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     monkeypatch.setattr(linux, "os", _Os())
     with pytest.raises(UnsupportedPlatformError, match="O_PATH"):
         linux.open_directory_opath(tmp_path)
+
+
+def test_d11_live_overmount_rejects_hidden_descendant() -> None:
+    """A real overmount, not a synthetic mount table.
+
+    A user and mount namespace bind-mounts an allowed filesystem, hides it
+    under tmpfs, and checks that the open directory's mount id selects the
+    covering tmpfs. That mount is rejected. The hidden mount stays visible
+    in mountinfo so a path-prefix choice would be a different id.
+    """
+
+    if shutil.which("unshare") is None:
+        _skip_live_overmount("unshare is not installed; the live overmount was not run")
+    script = r"""
+import subprocess
+from pathlib import Path
+
+from rewind.errors import UnsupportedFilesystemError
+from rewind.platform.linux import (
+    _read_dir_mnt_id,
+    _read_mountinfo_text,
+    parse_mountinfo,
+    resolve_linux_mount,
+    validate_linux,
+)
+
+subprocess.check_call(["mount", "--make-rprivate", "/"])
+base = Path("/tmp/rewind-d11-live")
+base.mkdir(parents=True, exist_ok=True)
+source = base / "source"
+place = base / "place"
+source.mkdir(exist_ok=True)
+place.mkdir(exist_ok=True)
+subprocess.check_call(["mount", "--bind", str(source), str(place)])
+nested = place / "nested"
+nested.mkdir(exist_ok=True)
+subprocess.check_call(["mount", "--bind", str(source), str(nested)])
+subprocess.check_call(["mount", "-t", "tmpfs", "tmpfs", str(place)])
+mountinfo = _read_mountinfo_text()
+mnt_id = _read_dir_mnt_id(place)
+selected = resolve_linux_mount(mnt_id, mountinfo)
+entries = parse_mountinfo(mountinfo)
+same_point = [entry for entry in entries if entry.mount_point == str(place)]
+hidden = [entry for entry in same_point if entry.mount_id != mnt_id]
+descendant = [entry for entry in entries if entry.mount_point == str(place / "nested")]
+if selected.mount_id != mnt_id or selected.fs_type != "tmpfs":
+    raise SystemExit(f"selected {selected.mount_id} {selected.fs_type} fd {mnt_id}")
+if len(hidden) < 1 or any(entry.fs_type == "tmpfs" for entry in hidden):
+    raise SystemExit(f"hidden mounts were not distinct: {same_point}")
+if len(descendant) != 1 or descendant[0].mount_id == mnt_id:
+    raise SystemExit(f"hidden descendant was not a different mount: {descendant}")
+try:
+    validate_linux(place, allow_tmpfs=False)
+except UnsupportedFilesystemError as exc:
+    if "tmpfs" not in str(exc):
+        raise
+else:
+    raise SystemExit("overmount was accepted")
+print(f"D11_LIVE_OVERMOUNT_OK mnt_id={mnt_id}")
+"""
+    completed = subprocess.run(
+        ["unshare", "-Urm", sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        denied = ("Operation not permitted", "Invalid argument", "unshare:")
+        if any(token in detail for token in denied):
+            _skip_live_overmount(f"user and mount namespace is not permitted here: {detail}")
+        raise AssertionError(detail or f"unshare exited {completed.returncode}")
+    assert "D11_LIVE_OVERMOUNT_OK" in completed.stdout
+
+
+def _skip_live_overmount(reason: str) -> None:
+    """Linux CI sets REWIND_REQUIRE_LIVE_OVERMOUNT=1 so this skip fails the job."""
+
+    if os.environ.get("REWIND_REQUIRE_LIVE_OVERMOUNT") == "1":
+        pytest.fail(reason)
+    pytest.skip(reason)
 
 
 def test_windows_is_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

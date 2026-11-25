@@ -40,7 +40,7 @@ from rewind.contracts.loader import (
     validate_tool_arguments,
 )
 from rewind.contracts.models import Contract
-from rewind.errors import ContractError
+from rewind.errors import ContractError, JournalError, StateTransitionError
 from rewind.journal.store import Journal
 from rewind.proxy.discovery import DiscoveryController, DiscoveryFailed
 from rewind.proxy.framing import (
@@ -111,6 +111,10 @@ class ProxySession:
         self._pending_empty = asyncio.Event()
         self._pending_empty.set()
         self._fatal_stop = asyncio.Event()
+        self._forward_gate: dict[str, asyncio.Event] = {}
+        self._forward_recorded: dict[str, bool] = {}
+        self._forward_wait_started = asyncio.Event()
+        self._evidence_error_sent: set[str] = set()
         self.discovery = DiscoveryController(
             self._upstream_rpc,
             timeout_ms=self.config.discovery_timeout_ms,
@@ -496,6 +500,10 @@ class ProxySession:
             self.log("journal write failed before forward")
             await self._reject(request_id, INTERNAL_ERROR, "Internal error", "JOURNAL_WRITE_FAILED")
             return
+        gate = asyncio.Event()
+        self._forward_gate[call_id] = gate
+        self._forward_recorded[call_id] = False
+        self._forward_wait_started.clear()
         self._pending_client[key] = Pending(
             request_id=request_id,
             method="tools/call",
@@ -503,12 +511,33 @@ class ProxySession:
             tx_id=self.tx_id,
         )
         self._pending_empty.clear()
-        sent = await self._send_up(forwarded)
-        if not sent:
-            await self._mark(call_id, "IN_DOUBT", "TRANSPORT_LOST", "TRANSPORT_LOST")
-            await self._fatal_upstream("upstream write failed", code=UPSTREAM_TERMINATED)
-            return
-        await self._mark(call_id, "FORWARDED", "FORWARDED", None, only_from="INTENT_RECORDED")
+        try:
+            sent = await self._send_up(forwarded)
+            if not sent:
+                await self._mark_or_fail(
+                    call_id,
+                    request_id,
+                    "IN_DOUBT",
+                    "TRANSPORT_LOST",
+                    "TRANSPORT_LOST",
+                    only_from="INTENT_RECORDED",
+                )
+                await self._fatal_upstream("upstream write failed", code=UPSTREAM_TERMINATED)
+                return
+            try:
+                self._transition(
+                    call_id,
+                    "FORWARDED",
+                    "FORWARDED",
+                    None,
+                    only_from="INTENT_RECORDED",
+                )
+            except (sqlite3.Error, JournalError):
+                await self._evidence_not_recorded(call_id, request_id)
+                return
+            self._forward_recorded[call_id] = True
+        finally:
+            gate.set()
 
     async def _on_upstream_notification(self, message: dict[str, Any]) -> None:
         if message.get("method") == "notifications/tools/list_changed":
@@ -564,14 +593,25 @@ class ProxySession:
         elif pending.method == "initialize":
             self._initialize_sent = False
         if pending.method == "tools/call" and pending.call_id is not None:
+            gate = self._forward_gate.get(pending.call_id)
+            if gate is not None and not gate.is_set():
+                self._forward_wait_started.set()
+                await gate.wait()
+            if not self._forward_recorded.get(pending.call_id, False):
+                return
             observed = message.get("result") if "result" in message else message.get("error")
-            await self._mark(
-                pending.call_id,
-                "RESPONSE_OBSERVED",
-                "RESPONSE_OBSERVED",
-                "RESPONSE_CONFIRMED",
-                _sha256(observed),
-            )
+            try:
+                self._transition(
+                    pending.call_id,
+                    "RESPONSE_OBSERVED",
+                    "RESPONSE_OBSERVED",
+                    "RESPONSE_CONFIRMED",
+                    payload_sha256=_sha256(observed),
+                    only_from="FORWARDED",
+                )
+            except (sqlite3.Error, JournalError):
+                await self._evidence_not_recorded(pending.call_id, pending.request_id)
+                return
         await self._send_down(message)
 
     async def _upstream_rpc(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -601,10 +641,19 @@ class ProxySession:
         pending = self._pending_client.get(key)
         if pending is None or pending.call_id is None:
             return
-        await self._mark(pending.call_id, "CANCEL_REQUESTED", "CANCEL_REQUESTED", None)
+        try:
+            self._transition(
+                pending.call_id,
+                "CANCEL_REQUESTED",
+                "CANCEL_REQUESTED",
+                None,
+                only_from=("INTENT_RECORDED", "FORWARDED"),
+            )
+        except (sqlite3.Error, JournalError) as exc:
+            self.log(f"cancellation was forwarded but not recorded: {exc}")
         self.log("cancellation forwarded; this does not prove the side effect was rolled back")
 
-    async def _mark(
+    def _transition(
         self,
         call_id: str,
         state: str,
@@ -612,20 +661,69 @@ class ProxySession:
         evidence: str | None,
         payload_sha256: str | None = None,
         *,
-        only_from: str | None = None,
+        only_from: str | tuple[str, ...] | None = None,
     ) -> None:
+        self.journal.mark_tool_state(
+            call_id=call_id,
+            tx_id=self.tx_id,
+            state=state,
+            event_type=event_type,
+            evidence_kind=evidence,
+            payload_sha256=payload_sha256,
+            only_from=only_from,
+        )
+
+    async def _mark_or_fail(
+        self,
+        call_id: str,
+        request_id: Any,
+        state: str,
+        event_type: str,
+        evidence: str | None,
+        *,
+        only_from: str | tuple[str, ...] | None = None,
+    ) -> bool:
         try:
-            self.journal.mark_tool_state(
-                call_id=call_id,
-                tx_id=self.tx_id,
-                state=state,
-                event_type=event_type,
-                evidence_kind=evidence,
-                payload_sha256=payload_sha256,
-                only_from=only_from,
+            self._transition(call_id, state, event_type, evidence, only_from=only_from)
+        except (sqlite3.Error, JournalError):
+            await self._evidence_not_recorded(call_id, request_id)
+            return False
+        return True
+
+    async def _evidence_not_recorded(self, call_id: str, request_id: Any) -> None:
+        """The upstream outcome is not a durable completion.
+
+        A failed evidence write rolls back. This method then tries to leave the
+        row IN_DOUBT. The client receives an error, not the upstream result.
+        """
+
+        try:
+            self._transition(
+                call_id,
+                "IN_DOUBT",
+                "TRANSPORT_LOST",
+                "TRANSPORT_LOST",
+                only_from=("INTENT_RECORDED", "FORWARDED", "CANCEL_REQUESTED"),
             )
-        except sqlite3.Error:
-            self.log("journal write failed while recording an observed transition")
+        except StateTransitionError:
+            self.log("evidence write failed and the state was left unchanged")
+        except (sqlite3.Error, JournalError):
+            self.log("evidence write failed and IN_DOUBT could not be recorded")
+            self.exit_code = 1
+            self._fatal = True
+            self._fatal_stop.set()
+        if call_id in self._evidence_error_sent:
+            return
+        self._evidence_error_sent.add(call_id)
+        await self._send_down(
+            error_message(
+                request_id,
+                INTERNAL_ERROR,
+                "Upstream outcome was seen but not durably recorded",
+                rewind_code="EVIDENCE_NOT_RECORDED",
+                category="JOURNAL",
+            )
+        )
 
     async def _drain_pending(self) -> None:
         timeout = self.config.shutdown_grace_ms / 1000
@@ -676,10 +774,17 @@ class ProxySession:
         self._pending_client.clear()
         self._pending_empty.set()
         for item in items:
-            if item.call_id is not None and code == UPSTREAM_TERMINATED:
-                await self._mark(item.call_id, "IN_DOUBT", "TRANSPORT_LOST", "TRANSPORT_LOST")
-            elif item.call_id is not None:
-                await self._mark(item.call_id, "IN_DOUBT", "TRANSPORT_LOST", "TRANSPORT_LOST")
+            if item.call_id is not None:
+                try:
+                    self._transition(
+                        item.call_id,
+                        "IN_DOUBT",
+                        "TRANSPORT_LOST",
+                        "TRANSPORT_LOST",
+                        only_from=("INTENT_RECORDED", "FORWARDED", "CANCEL_REQUESTED"),
+                    )
+                except (sqlite3.Error, JournalError) as exc:
+                    self.log(f"pending call left without a new journal event: {exc}")
             await self._send_down(
                 error_message(
                     item.request_id,

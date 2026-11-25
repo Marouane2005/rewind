@@ -29,6 +29,15 @@ class JournalError(RewindError):
     """The journal could not be opened or updated."""
 
 
+class StateTransitionError(JournalError):
+    """A conditional state change did not apply.
+
+    The fencing check and the ``UPDATE ... WHERE state = expected`` run in one
+    transaction. Zero rows means the transition is refused and no event is
+    appended.
+    """
+
+
 class JournalCorruptionError(JournalError):
     """An existing database does not match the canonical schema.
 

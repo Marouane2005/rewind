@@ -31,6 +31,6 @@ The written baseline is in [design-baseline](design-baseline/README.md). A few p
 
 - The baseline names seven tables and requires nine, and it requires four indexes without naming them. `transactions` and `proxy_sessions`, and the four index names, are proposals recorded in [schema.md](schema.md). They are implemented so the inventory test can pass.
 - Linux `parent_id` must be accepted when it is 0. Some kernels report 0 for the namespace root. Rejecting it would refuse ordinary root filesystems. Mount ids must still be positive and unique.
-- The Darwin `statfs` layout is the one specified for Phase 1. This tree checks that ctypes produces that layout and fails closed if it does not. It does not change the layout to match an unverified header. Live `fstatfs` still has to be run on Darwin. See [platform-support.md](platform-support.md).
+- The Darwin `statfs` layout is `__DARWIN_STRUCT_STATFS64` from XNU `bsd/sys/mount.h` tag `xnu-11215.81.4`. ctypes must produce that layout. A mismatch fails closed and does not rewrite the structure. Live `fstatfs` runs only on Darwin. See [platform-support.md](platform-support.md).
 
-Historical protocol tests P1–P9 and P11–P21, and design tests D1–D6, are not defined in the written baseline. They are listed as missing in [traceability.md](traceability.md) rather than invented.
+P1–P9, P11–P21, and D1–D6 are UNRESOLVED / SPECIFICATION DETAIL MISSING. No file in this repository defines them. See [traceability.md](traceability.md).

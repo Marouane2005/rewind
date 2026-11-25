@@ -122,6 +122,24 @@ def test_d7_schema_integrity(tmp_path: Path) -> None:
             Journal.open(path)
 
 
+def test_d7_changed_check_is_rejected(tmp_path: Path) -> None:
+    db = tmp_path / "journal.sqlite"
+    Journal.open(db).close()
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA writable_schema=ON")
+    original = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'proxy_leases'").fetchone()[0]
+    assert "CHECK (epoch >= 1)" in original
+    conn.execute(
+        "UPDATE sqlite_master SET sql = ? WHERE name = 'proxy_leases'",
+        (original.replace("CHECK (epoch >= 1)", "CHECK (epoch >= 2)", 1),),
+    )
+    conn.execute("PRAGMA writable_schema=RESET")
+    conn.commit()
+    conn.close()
+    with pytest.raises(JournalCorruptionError):
+        Journal.open(db)
+
+
 def test_d7_altered_check_default_unique_and_fk(tmp_path: Path) -> None:
     db = tmp_path / "journal.sqlite"
     Journal.open(db).close()

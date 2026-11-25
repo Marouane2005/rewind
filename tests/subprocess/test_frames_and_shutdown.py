@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import select
+import sqlite3
 import time
 from pathlib import Path
 
@@ -216,6 +219,121 @@ def test_p22_shutdown_paths(tmp_path: Path) -> None:
     assert error["error"]["code"] == -32600
     assert "incomplete" in error["error"]["message"]
     assert code == 1
+
+
+class _UpstreamLog:
+    """Block on the fake upstream's log fifo. The wait is for a written line."""
+
+    def __init__(self, path: Path) -> None:
+        os.mkfifo(path)
+        self.fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        self.buf = bytearray()
+
+    def wait_for(self, needle: str, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        while needle.encode() not in self.buf:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                seen = self.buf.decode("utf-8", errors="replace")
+                raise AssertionError(f"upstream log never contained {needle!r}: {seen!r}")
+            ready, _, _ = select.select([self.fd], [], [], remaining)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(self.fd, 4096)
+            except BlockingIOError:
+                continue
+            if chunk:
+                self.buf.extend(chunk)
+
+    def close(self) -> None:
+        os.close(self.fd)
+
+
+def test_p10_downstream_oversize_while_tool_call_is_pending(tmp_path: Path) -> None:
+    limit = 2048
+    log_path = tmp_path / "upstream.fifo"
+    upstream = _UpstreamLog(log_path)
+    proc = start_proxy(
+        tmp_path / "pending.sqlite",
+        scenario="hold-call",
+        extra=["--max-frame-bytes", str(limit), "--shutdown-grace-ms", "200"],
+        log_path=log_path,
+    )
+    try:
+        handshake(proc)
+        proc.send_json({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "echo", "arguments": {}}})
+        upstream.wait_for("tools/call", 5)
+        proc.send_bytes(b"x" * (limit + 1) + b"\n")
+        oversized = proc.read_json(timeout=5)
+        pending = proc.read_json(timeout=5)
+        code = proc.wait(5)
+    finally:
+        upstream.close()
+        proc.stop()
+    assert oversized["id"] is None
+    assert oversized["error"]["code"] == -32600
+    assert oversized["error"]["message"] == "Invalid Request: frame exceeds max_frame_bytes"
+    assert oversized["error"]["data"]["rewind_code"] == "INVALID_REQUEST"
+    assert oversized["error"]["data"]["category"] == "CLIENT_PROTOCOL"
+    assert oversized["error"]["data"]["max_frame_bytes"] == limit
+    assert pending["id"] == 7
+    assert pending["error"]["code"] == -32014
+    assert pending["error"]["message"] == "Upstream terminated"
+    assert pending["error"]["data"]["rewind_code"] == "UPSTREAM_TERMINATED"
+    assert "result" not in pending
+    assert code == 1
+    assert proc.proc.returncode == 1
+    _assert_pending_call_is_not_completed(tmp_path / "pending.sqlite")
+
+
+def test_p22_sigterm_then_sigkill(tmp_path: Path) -> None:
+    log_path = tmp_path / "upstream.fifo"
+    upstream = _UpstreamLog(log_path)
+    proc = start_proxy(
+        tmp_path / "kill.sqlite",
+        scenario="ignore-sigterm",
+        extra=["--shutdown-grace-ms", "200"],
+        log_path=log_path,
+    )
+    try:
+        upstream.wait_for("IGNORING-SIGTERM", 5)
+        handshake(proc)
+        proc.close_stdin()
+        upstream.wait_for("GOT-SIGTERM", 5)
+        signaled = time.monotonic()
+        code = proc.wait(5)
+        elapsed = time.monotonic() - signaled
+    finally:
+        upstream.close()
+        proc.stop()
+    assert code == 0
+    assert proc.proc.returncode == 0
+    assert elapsed >= 0.7
+    assert elapsed < 4
+
+
+def _assert_pending_call_is_not_completed(db: Path) -> None:
+    conn = sqlite3.connect(db)
+    try:
+        rows = conn.execute("SELECT state FROM tool_calls").fetchall()
+        events = conn.execute("SELECT event_type, evidence_kind FROM journal_events ORDER BY seq").fetchall()
+        orphans = conn.execute(
+            """
+            SELECT COUNT(*)
+              FROM journal_events AS event
+              LEFT JOIN tool_calls AS call
+                ON call.call_id = event.call_id AND call.tx_id = event.tx_id
+             WHERE call.call_id IS NULL
+            """
+        ).fetchone()
+    finally:
+        conn.close()
+    assert rows == [("IN_DOUBT",)]
+    assert [event[0] for event in events] == ["INTENT_RECORDED", "FORWARDED", "TRANSPORT_LOST"]
+    assert events[-1][1] == "TRANSPORT_LOST"
+    assert all(event[1] != "RESPONSE_CONFIRMED" for event in events)
+    assert orphans is not None and orphans[0] == 0
 
 
 def test_replace_env_does_not_merge(tmp_path: Path) -> None:

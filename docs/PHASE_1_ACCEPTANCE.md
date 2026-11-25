@@ -16,21 +16,21 @@ Names used from here on:
 
 There is no exactly-once claim.
 
-## Passed on the tests named in the traceability matrix
+## What the named tests actually cover
 
-| Point | Evidence |
-| --- | --- |
-| P10 oversized frames | `tests/subprocess/test_frames_and_shutdown.py` and `tests/unit/test_framing.py` |
-| P22 shutdown | `test_p22_shutdown_paths` |
-| D7 schema integrity | `test_d7_schema_integrity`, `test_d7_altered_check_default_unique_and_fk` |
-| D8 compensation accounting | `test_d8_compensation_adjustments`, `test_compensation_terminal_rules` |
-| D9 atomic bootstrap | `test_d9_atomic_bootstrap`, `test_schema_splits_trigger_bodies_and_has_no_pragma` |
-| D10 composite parent key | `test_d10_composite_parent_fk` |
-| D11 hidden descendant mount | `test_d11_hidden_descendant_uses_descriptor_mount_id` (synthetic mount table) |
-| D12 Linux `O_PATH` | `test_d12_opath_execute_only_directory`, `test_missing_o_path_fails_closed` |
-| D13 Darwin ABI and live `fstatfs` | Layout assertions in `tests/unit/test_darwin_abi.py`. Live `fstatfs` runs only on Darwin. The layout is cited to XNU `bsd/sys/mount.h` tag `xnu-11215.81.4`. |
-| Atomic state transitions | `tests/integration/test_state_transitions.py` |
-| Evidence write failure is not completion | `test_response_write_failure_is_not_completion` |
+| Point | Status | Evidence |
+| --- | --- | --- |
+| P10 oversized frames | Partial | Frame limits, UTF-8, CRLF, same-chunk order, and upstream `-32013` are tested. A downstream oversized frame with a still-pending `tools/call` is not. |
+| P22 shutdown | Partial | `test_p22_shutdown_paths` covers EOF, idle, pending, grace, the partial frame, and the exit code. The `SIGKILL` escalation is not separately asserted. |
+| D7 schema integrity | Direct | `test_d7_schema_integrity`, `test_d7_altered_check_default_unique_and_fk`, `test_d7_changed_check_is_rejected` |
+| D8 compensation accounting | Direct | `test_d8_compensation_adjustments`, `test_compensation_terminal_rules` |
+| D9 atomic bootstrap | Direct | `test_d9_atomic_bootstrap`, `test_schema_splits_trigger_bodies_and_has_no_pragma` |
+| D10 composite parent key | Direct | `test_d10_composite_parent_fk` |
+| D11 hidden descendant mount | Partial | Synthetic mount table in `test_d11_hidden_descendant_uses_descriptor_mount_id`. No live overmount. |
+| D12 Linux `O_PATH` | Direct on Linux | `test_d12_opath_execute_only_directory`, `test_missing_o_path_fails_closed`. Skipped on Darwin. |
+| D13 Darwin ABI and live `fstatfs` | Direct | Layout, field types, NUL, UTF-8, errno, descriptor closure, and per-architecture symbol selection. Live `fstatfs` runs only on Darwin. |
+| Atomic state transitions | Direct | `tests/integration/test_state_transitions.py` |
+| Evidence write failure is not completion | Direct | `test_response_write_failure_is_not_completion` and `test_both_evidence_writes_fail_closed` |
 
 P1–P9, P11–P21, and D1–D6 are undefined in the baseline. They are not passed.
 

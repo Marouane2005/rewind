@@ -40,6 +40,24 @@ def test_d13_layout_matches_required_abi() -> None:
     size, offsets = assert_darwin_layout()
     assert size == EXPECTED_STATFS_SIZE == 2168
     assert offsets == EXPECTED_OFFSETS
+    fields = dict(DarwinStatfs64._fields_)
+    assert fields["f_bsize"] is ctypes.c_uint32
+    assert fields["f_iosize"] is ctypes.c_int32
+    assert fields["f_blocks"] is ctypes.c_uint64
+    assert fields["f_bfree"] is ctypes.c_uint64
+    assert fields["f_bavail"] is ctypes.c_uint64
+    assert fields["f_files"] is ctypes.c_uint64
+    assert fields["f_ffree"] is ctypes.c_uint64
+    assert fields["f_owner"] is ctypes.c_uint32
+    assert fields["f_type"] is ctypes.c_uint32
+    assert fields["f_flags"] is ctypes.c_uint32
+    assert fields["f_fssubtype"] is ctypes.c_uint32
+    assert fields["f_flags_ext"] is ctypes.c_uint32
+    assert fields["f_fstypename"]._length_ == 16
+    assert fields["f_mntonname"]._length_ == 1024
+    assert fields["f_mntfromname"]._length_ == 1024
+    assert fields["f_fsid"]._length_ == 2
+    assert fields["f_reserved"]._length_ == 7
     assert platform.machine()
 
 

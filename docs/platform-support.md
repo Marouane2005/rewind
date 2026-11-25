@@ -4,8 +4,8 @@
 | --- | --- | --- |
 | Linux x86_64 | ext2, ext3, ext4, xfs, btrfs, zfs, f2fs, jfs, reiserfs | Implemented. Live checks run where the host is Linux. |
 | Linux other architectures | same allowlist | The code is not architecture-specific. It has not been executed on non-x86_64 Linux in the initial run. |
-| macOS arm64 | apfs, hfs, ufs, zfs | Implemented. Live `fstatfs` runs only on Darwin. |
-| macOS x86_64 | apfs, hfs, ufs, zfs | Same code path. Not verified until a live x86_64 Darwin run passes. |
+| macOS arm64 | apfs, hfs, ufs, zfs | Implemented. The `macos-15` CI job runs live `fstatfs`. That pass is not an x86_64 pass. |
+| macOS x86_64 | apfs, hfs, ufs, zfs | Same structure. The symbol is `fstatfs$INODE64`. The `macos-15-intel` CI job runs live `fstatfs`. |
 | Windows | none | `UnsupportedPlatformError` |
 | 32-bit Darwin | none | `UnsupportedPlatformError` |
 
@@ -25,7 +25,7 @@ Darwin uses `fstatfs` through `ctypes` and never reads `/proc` or runs `df`. The
 
 The symbol is not the same string on both architectures. `bsd/sys/cdefs.h` at that tag sets `__DARWIN_ONLY_64_BIT_INO_T` to 0 for `__x86_64__` and to 1 otherwise. `__DARWIN_INODE64(fstatfs)` therefore asm-renames the C call to `fstatfs$INODE64` on Intel and leaves it as `fstatfs` on arm64. `ctypes` looks up the literal symbol, so the Intel path binds `fstatfs$INODE64`, then `fstatfs64` if that older `struct statfs64` entry is the one exported. The plain `fstatfs` symbol on Intel is the legacy 32-bit-inode struct and is not called. arm64 exports only the 64-bit form, under `fstatfs`.
 
-Names are taken from the fixed buffers only when a NUL is present, and they are decoded as strict UTF-8. The descriptor is closed on success and on failure.
+Names are taken from the fixed buffers only when a NUL is present, and they are decoded as strict UTF-8. The descriptor is closed on success and on failure. `f_flags` is part of the structure and is not an input to the filesystem allowlist.
 
 The layout was not compared with an Apple SDK on the Linux host that produced the initial test run. A later macOS CI job, if it passes, verifies the architecture of that runner only.
 

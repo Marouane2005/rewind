@@ -172,6 +172,10 @@ def test_response_write_failure_is_not_completion(tmp_path: Path) -> None:
     asyncio.run(_response_write_failure(tmp_path))
 
 
+def test_both_evidence_writes_fail_closed(tmp_path: Path) -> None:
+    asyncio.run(_both_evidence_writes_fail(tmp_path))
+
+
 def _frame(message: dict[str, Any]) -> bytes:
     return json.dumps(message, separators=(",", ":")).encode()
 
@@ -347,5 +351,71 @@ async def _response_write_failure(tmp_path: Path) -> None:
         assert errors[-1]["error"]["message"] == "Upstream outcome was seen but not durably recorded"
         assert errors[-1]["error"]["data"]["rewind_code"] == "EVIDENCE_NOT_RECORDED"
         assert errors[-1]["error"]["data"]["category"] == "JOURNAL"
+    finally:
+        journal.close()
+
+
+async def _both_evidence_writes_fail(tmp_path: Path) -> None:
+    response_task: asyncio.Task[None] | None = None
+    seen = {"writes": 0}
+
+    async def send_upstream(message: dict[str, Any]) -> bool:
+        nonlocal response_task
+        if message.get("method") == "tools/list":
+            await session.handle_upstream_frame(
+                _frame(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": message["id"],
+                        "result": {"tools": [{"name": "echo"}]},
+                    }
+                )
+            )
+            return True
+        if message.get("method") == "tools/call":
+            response_task = asyncio.create_task(
+                session.handle_upstream_frame(
+                    _frame(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": message["id"],
+                            "result": {"content": [], "isError": False},
+                        }
+                    )
+                )
+            )
+            await session._forward_wait_started.wait()  # noqa: SLF001
+
+            def arm() -> None:
+                seen["writes"] += 1
+                if seen["writes"] > 1:
+                    journal.fail_next_mutation(sqlite3.OperationalError("disk I/O error"))
+
+            journal.after_fence = arm
+            return True
+        return True
+
+    session, downstream, journal = await _prepare(tmp_path, send_upstream)
+    try:
+        await session.handle_downstream_frame(
+            _frame(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 8,
+                    "method": "tools/call",
+                    "params": {"name": "echo", "arguments": {}},
+                }
+            )
+        )
+        assert response_task is not None
+        await response_task
+        call_id = str(journal.connection.execute("SELECT call_id FROM tool_calls").fetchone()[0])
+        assert _state(journal, call_id) == "FORWARDED"
+        assert _events(journal, call_id) == ["INTENT_RECORDED", "FORWARDED"]
+        assert all("result" not in item for item in downstream if item.get("id") == 8)
+        errors = [item for item in downstream if item.get("id") == 8]
+        assert errors[-1]["error"]["data"]["rewind_code"] == "EVIDENCE_NOT_RECORDED"
+        assert session.exit_code == 1
+        assert session._fatal is True  # noqa: SLF001
     finally:
         journal.close()

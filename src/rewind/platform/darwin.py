@@ -2,10 +2,19 @@
 
 This path never reads Linux /proc and never shells out to df. The structure
 matches ``__DARWIN_STRUCT_STATFS64`` in XNU ``bsd/sys/mount.h`` (tag
-``xnu-11215.81.4``). On 64-bit Darwin, ``struct statfs`` is that layout and
-``fstatfs`` is the ``__DARWIN_INODE64`` symbol. ``MAXPATHLEN`` is ``PATH_MAX``
-from ``bsd/sys/param.h``; Darwin's ``PATH_MAX`` is 1024 (``bsd/sys/syslimits.h``).
-``f_fsid`` is two ``int32_t`` values and ``f_owner`` is a 32-bit ``uid_t``.
+``xnu-11215.81.4``). ``MAXPATHLEN`` is ``PATH_MAX`` from ``bsd/sys/param.h``;
+Darwin's ``PATH_MAX`` is 1024 (``bsd/sys/syslimits.h``). ``f_fsid`` is two
+``int32_t`` values and ``f_owner`` is a 32-bit ``uid_t``.
+
+``bsd/sys/cdefs.h`` at the same tag sets ``__DARWIN_ONLY_64_BIT_INO_T`` to 0
+for ``__x86_64__`` and to 1 for every other Mac architecture, including
+arm64. ``_DARWIN_FEATURE_64_BIT_INODE`` is defined when
+``__DARWIN_64_BIT_INO_T`` is set. ``__DARWIN_INODE64(sym)`` then asm-renames
+the call to ``sym$INODE64`` on x86_64 and leaves the name unchanged on
+arm64. ``ctypes`` does not apply that rename. The plain ``fstatfs`` symbol
+on x86_64 still fills the legacy 32-bit-inode ``struct statfs``, so this
+module binds ``fstatfs$INODE64`` there, or ``fstatfs64`` when that older
+entry is the one present. arm64 has only the 64-bit form, under ``fstatfs``.
 
 With that field list and natural LP64 alignment the name fields sit at
 offsets 72, 88, and 1112, ``f_flags_ext`` at 2136, ``f_reserved`` at 2140,
@@ -120,9 +129,42 @@ def assert_darwin_filesystem(fs_type: str, *, allow_tmpfs: bool) -> None:
         raise UnsupportedFilesystemError(f"filesystem type {fs_type!r} is not allowed")
 
 
-def call_fstatfs(libc: Any, fd: int) -> DarwinStatfs64:
+def fstatfs_symbol_names(machine: str) -> tuple[str, ...]:
+    """64-bit ``fstatfs`` symbols for this Darwin architecture, preferred first.
+
+    x86_64 keeps the legacy 32-bit-inode struct on the plain ``fstatfs``
+    symbol. The 2168-byte layout is ``fstatfs$INODE64``, which is what
+    ``__DARWIN_INODE64(fstatfs)`` names when ``_DARWIN_FEATURE_64_BIT_INODE``
+    is set and ``__DARWIN_ONLY_64_BIT_INO_T`` is 0. ``fstatfs64`` is the
+    older explicit entry and takes the same ``struct statfs64``. arm64 sets
+    ``__DARWIN_ONLY_64_BIT_INO_T``, so the suffix is empty and ``fstatfs64``
+    is not declared.
+    """
+
+    if machine == "arm64":
+        return ("fstatfs",)
+    if machine == "x86_64":
+        return ("fstatfs$INODE64", "fstatfs64")
+    raise UnsupportedPlatformError(f"unsupported Darwin architecture: {machine}")
+
+
+def bind_fstatfs(libc: Any, machine: str) -> tuple[Any, str]:
+    """Return the libc function that fills ``__DARWIN_STRUCT_STATFS64``."""
+
+    names = fstatfs_symbol_names(machine)
+    for name in names:
+        try:
+            return getattr(libc, name), name
+        except AttributeError:
+            continue
+    joined = ", ".join(names)
+    raise DarwinAbiError(f"no 64-bit fstatfs symbol for {machine}; tried {joined}")
+
+
+def call_fstatfs(libc: Any, fd: int, *, machine: str | None = None) -> DarwinStatfs64:
     assert_darwin_layout()
-    function = libc.fstatfs
+    resolved = platform.machine() if machine is None else machine
+    function, _symbol = bind_fstatfs(libc, resolved)
     try:
         function.argtypes = [ctypes.c_int, ctypes.POINTER(DarwinStatfs64)]
         function.restype = ctypes.c_int

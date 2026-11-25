@@ -16,8 +16,10 @@ from rewind.platform.darwin import (
     DarwinStatfs64,
     assert_darwin_layout,
     assert_supported_darwin_process,
+    bind_fstatfs,
     call_fstatfs,
     decode_fixed_buffer,
+    fstatfs_symbol_names,
     validate_darwin_directory,
 )
 
@@ -63,6 +65,9 @@ def test_d13_fstatfs_errno_and_fd_closure(tmp_path: Path) -> None:
         def fstatfs(self, fd: int, _buf: object) -> int:
             ctypes.set_errno(errno.EIO)
             return -1
+
+    setattr(FakeLibc, "fstatfs$INODE64", FakeLibc.fstatfs)  # noqa: B010
+    FakeLibc.fstatfs64 = FakeLibc.fstatfs
 
     with pytest.raises(UnsupportedFilesystemError, match="errno 5"):
         call_fstatfs(FakeLibc(), 3)
@@ -123,6 +128,54 @@ def test_d13_live_fstatfs_records_machine(tmp_path: Path) -> None:
     if expected:
         assert report.machine == expected
     assert report.fs_type in {"apfs", "hfs", "ufs", "zfs", "tmpfs"}
+
+
+def test_fstatfs_symbol_is_selected_per_architecture() -> None:
+    assert fstatfs_symbol_names("arm64") == ("fstatfs",)
+    assert fstatfs_symbol_names("x86_64") == ("fstatfs$INODE64", "fstatfs64")
+    with pytest.raises(UnsupportedPlatformError):
+        fstatfs_symbol_names("i386")
+
+    class Lib:
+        def __init__(self) -> None:
+            self.fstatfs = _marked()
+            self.fstatfs64 = _marked()
+            setattr(self, "fstatfs$INODE64", _marked())  # noqa: B010
+
+    arm = Lib()
+    function, name = bind_fstatfs(arm, "arm64")
+    assert name == "fstatfs"
+    assert function is arm.fstatfs
+
+    intel = Lib()
+    function, name = bind_fstatfs(intel, "x86_64")
+    assert name == "fstatfs$INODE64"
+    assert function is getattr(intel, "fstatfs$INODE64")
+    assert function is not intel.fstatfs
+
+    older = Lib()
+    delattr(older, "fstatfs$INODE64")
+    function, name = bind_fstatfs(older, "x86_64")
+    assert name == "fstatfs64"
+    assert function is older.fstatfs64
+
+    legacy_only = Lib()
+    delattr(legacy_only, "fstatfs$INODE64")
+    delattr(legacy_only, "fstatfs64")
+    with pytest.raises(DarwinAbiError, match="fstatfs\\$INODE64"):
+        bind_fstatfs(legacy_only, "x86_64")
+
+    renamed_only = Lib()
+    delattr(renamed_only, "fstatfs")
+    with pytest.raises(DarwinAbiError, match="fstatfs"):
+        bind_fstatfs(renamed_only, "arm64")
+
+
+def _marked():
+    def function(*_args: object) -> int:
+        return 0
+
+    return function
 
 
 def test_layout_mismatch_is_reported_not_rewritten(monkeypatch: pytest.MonkeyPatch) -> None:

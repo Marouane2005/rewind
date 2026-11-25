@@ -7,6 +7,7 @@ Hardening of the MCP proxy foundation frozen at `cb2535b`.
 - Journal state changes are one fenced transaction: `BEGIN IMMEDIATE`, the epoch check, a conditional update, and the event insert. A mismatched state appends no event and raises `StateTransitionError`.
 - `RESPONSE_OBSERVED` is recorded only after `FORWARDED` commits for that call. A failed evidence write is not reported as completion; the client gets `-32603` / `EVIDENCE_NOT_RECORDED`, and the row stays non-terminal when the follow-up `IN_DOUBT` write commits.
 - Darwin `statfs` layout is cited to XNU `bsd/sys/mount.h` tag `xnu-11215.81.4`. CI runs Linux, macOS arm64 (`macos-15`), and macOS x86_64 (`macos-15-intel`) separately.
+- Intel `fstatfs` is bound as `fstatfs$INODE64` (or `fstatfs64` when that is the exported 64-bit entry). The plain symbol is the legacy 32-bit-inode struct. arm64 keeps plain `fstatfs`, which is the only 64-bit form there.
 
 Phase names from here:
 

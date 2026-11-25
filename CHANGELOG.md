@@ -9,6 +9,7 @@ Hardening of the MCP proxy foundation frozen at `cb2535b`.
 - Darwin `statfs` layout is cited to XNU `bsd/sys/mount.h` tag `xnu-11215.81.4`. CI runs Linux, macOS arm64 (`macos-15`), and macOS x86_64 (`macos-15-intel`) separately.
 - Intel `fstatfs` is bound as `fstatfs$INODE64` (or `fstatfs64` when that is the exported 64-bit entry). The plain symbol is the legacy 32-bit-inode struct. arm64 keeps plain `fstatfs`, which is the only 64-bit form there.
 - A failed `RESPONSE_OBSERVED` write whose `IN_DOUBT` follow-up also fails leaves the row `FORWARDED`, returns `-32603` / `EVIDENCE_NOT_RECORDED`, and does not forward the upstream result. A rewritten `CHECK` clause fails schema verification.
+- Downstream oversized input while a tool call is pending returns `-32600` and then `-32014`, and the journal row stays `IN_DOUBT`. A live Linux overmount is selected by the directory fd's mount id. An upstream that ignores `SIGTERM` is reaped with `SIGKILL` after one second.
 
 Phase names from here:
 

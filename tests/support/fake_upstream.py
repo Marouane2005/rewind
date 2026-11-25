@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sys
 import time
+from typing import TextIO
 
 PROTOCOL = "2025-11-25"
 
@@ -22,21 +24,37 @@ def main() -> int:
     max_frame = int(os.environ.get("REWIND_FAKE_MAX", "1024"))
     calls: list[object] = []
 
+    log_handle: TextIO | None = None
+
     def log(message: str) -> None:
+        nonlocal log_handle
         if not log_path:
             return
-        with open(log_path, "a", encoding="utf-8") as handle:
-            handle.write(message + "\n")
+        if log_handle is None:
+            log_handle = open(log_path, "a", encoding="utf-8")
+        log_handle.write(message + "\n")
+        log_handle.flush()
 
     def write(message: dict[str, object]) -> None:
         sys.stdout.buffer.write(json.dumps(message, separators=(",", ":")).encode() + b"\n")
         sys.stdout.buffer.flush()
+
+    if scenario == "ignore-sigterm":
+
+        def on_term(_signum: int, _frame: object) -> None:
+            log("GOT-SIGTERM")
+
+        signal.signal(signal.SIGTERM, on_term)
+        log("IGNORING-SIGTERM")
 
     while True:
         line = sys.stdin.buffer.readline()
         if line == b"":
             if scenario == "hold-open":
                 time.sleep(30)
+            if scenario == "ignore-sigterm":
+                while True:
+                    signal.pause()
             return 0
         try:
             message = json.loads(line)

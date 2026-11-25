@@ -20,13 +20,13 @@ There is no exactly-once claim.
 
 | Point | Status | Evidence |
 | --- | --- | --- |
-| P10 oversized frames | Partial | Frame limits, UTF-8, CRLF, same-chunk order, and upstream `-32013` are tested. A downstream oversized frame with a still-pending `tools/call` is not. |
-| P22 shutdown | Partial | `test_p22_shutdown_paths` covers EOF, idle, pending, grace, the partial frame, and the exit code. The `SIGKILL` escalation is not separately asserted. |
+| P10 oversized frames | Direct | Includes `test_p10_downstream_oversize_while_tool_call_is_pending`. |
+| P22 shutdown | Direct | `test_p22_shutdown_paths` and `test_p22_sigterm_then_sigkill`. The kill wait is one second in `_terminate`. |
 | D7 schema integrity | Direct | `test_d7_schema_integrity`, `test_d7_altered_check_default_unique_and_fk`, `test_d7_changed_check_is_rejected` |
 | D8 compensation accounting | Direct | `test_d8_compensation_adjustments`, `test_compensation_terminal_rules` |
 | D9 atomic bootstrap | Direct | `test_d9_atomic_bootstrap`, `test_schema_splits_trigger_bodies_and_has_no_pragma` |
 | D10 composite parent key | Direct | `test_d10_composite_parent_fk` |
-| D11 hidden descendant mount | Partial | Synthetic mount table in `test_d11_hidden_descendant_uses_descriptor_mount_id`. No live overmount. |
+| D11 hidden descendant mount | Direct on Linux | Synthetic test kept. `test_d11_live_overmount_rejects_hidden_descendant` is the live overmount. A skip is not a pass. |
 | D12 Linux `O_PATH` | Direct on Linux | `test_d12_opath_execute_only_directory`, `test_missing_o_path_fails_closed`. Skipped on Darwin. |
 | D13 Darwin ABI and live `fstatfs` | Direct | Layout, field types, NUL, UTF-8, errno, descriptor closure, and per-architecture symbol selection. Live `fstatfs` runs only on Darwin. |
 | Atomic state transitions | Direct | `tests/integration/test_state_transitions.py` |
@@ -41,5 +41,5 @@ P1–P9, P11–P21, and D1–D6 are undefined in the baseline. They are not pass
 - A crash can leave `INTENT_RECORDED` or `FORWARDED`. This build does not classify those rows on the next open.
 - Cancellation forwarded upstream is not proof the side effect stopped. If the journal write for `CANCEL_REQUESTED` fails, the notification was still forwarded and the row is unchanged.
 - The flock is the single-writer lease. A program that opens the SQLite file directly bypasses it.
-- `D11` does not mount a real nested filesystem. `D12` does not run on macOS.
+- `D12` does not run on macOS. The live D11 overmount runs only where a user and mount namespace is permitted.
 - Darwin `fstatfs` is verified only on the Darwin CI runners that executed `test_d13_live_fstatfs_records_machine`. A pass on one architecture is not a pass on the other.

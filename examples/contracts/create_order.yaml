@@ -1,0 +1,33 @@
+contract_version: 1
+tenant: local
+server_name: example-orders
+tools:
+  - name: create_order
+    operation: create
+    effect: mutating
+    verification: verifiable
+    mutating_unverifiable: false
+    business_key:
+      trust: CONTRACT_DERIVED_KEY
+      fields:
+        - order_id
+    input_schema:
+      type: object
+      additionalProperties: false
+      required:
+        - order_id
+        - amount
+      properties:
+        order_id:
+          type: string
+        amount:
+          type: integer
+          minimum: 1
+        card_token:
+          type: string
+    rules:
+      - {">": [{"var": "input.amount"}, 0]}
+    redact:
+      input:
+        - $.input.card_token
+      output: []

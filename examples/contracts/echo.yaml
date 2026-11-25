@@ -1,0 +1,22 @@
+contract_version: 1
+tenant: local
+server_name: example
+tools:
+  - name: echo
+    operation: create
+    effect: read
+    verification: verifiable
+    mutating_unverifiable: false
+    business_key:
+      trust: CALL_ID_FALLBACK
+      fields: []
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+    rules: []
+    redact:
+      input: []
+      output: []

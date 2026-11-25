@@ -1,0 +1,25 @@
+contract_version: 1
+tenant: local
+server_name: example-orders
+tools:
+  - name: refund_order
+    operation: follow_up
+    effect: mutating
+    verification: verifiable
+    mutating_unverifiable: false
+    business_key:
+      trust: UPSTREAM_ISSUED_ID
+      fields:
+        - payment_id
+    input_schema:
+      type: object
+      additionalProperties: false
+      required:
+        - payment_id
+      properties:
+        payment_id:
+          type: string
+    rules: []
+    redact:
+      input: []
+      output: []

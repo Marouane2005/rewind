@@ -23,7 +23,15 @@ from rewind.platform.darwin import (
 
 
 def _fd_count() -> int:
-    return len(os.listdir("/proc/self/fd"))
+    """Count open descriptors without assuming Linux procfs.
+
+    Darwin has no ``/proc/self/fd``. ``/dev/fd`` lists the same descriptors
+    there. Linux keeps the procfs path. The directory fd used for the listing
+    is included on both, so before/after comparisons stay valid.
+    """
+
+    directory = "/dev/fd" if sys.platform == "darwin" else "/proc/self/fd"
+    return sum(name.isdigit() for name in os.listdir(directory))
 
 
 def test_d13_layout_matches_required_abi() -> None:

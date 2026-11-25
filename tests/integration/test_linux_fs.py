@@ -84,7 +84,7 @@ def test_d11_live_overmount_rejects_hidden_descendant() -> None:
     """
 
     if shutil.which("unshare") is None:
-        pytest.skip("unshare is not installed; the live overmount was not run")
+        _skip_live_overmount("unshare is not installed; the live overmount was not run")
     script = r"""
 import subprocess
 from pathlib import Path
@@ -143,9 +143,17 @@ print(f"D11_LIVE_OVERMOUNT_OK mnt_id={mnt_id}")
         detail = (completed.stderr or completed.stdout).strip()
         denied = ("Operation not permitted", "Invalid argument", "unshare:")
         if any(token in detail for token in denied):
-            pytest.skip(f"user and mount namespace is not permitted here: {detail}")
+            _skip_live_overmount(f"user and mount namespace is not permitted here: {detail}")
         raise AssertionError(detail or f"unshare exited {completed.returncode}")
     assert "D11_LIVE_OVERMOUNT_OK" in completed.stdout
+
+
+def _skip_live_overmount(reason: str) -> None:
+    """Linux CI sets REWIND_REQUIRE_LIVE_OVERMOUNT=1 so this skip fails the job."""
+
+    if os.environ.get("REWIND_REQUIRE_LIVE_OVERMOUNT") == "1":
+        pytest.fail(reason)
+    pytest.skip(reason)
 
 
 def test_windows_is_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -16,12 +16,15 @@ jobs:
           - os: ubuntu-latest
             label: linux
             arch: x86_64
+            require_overmount: "1"
           - os: macos-15
             label: macos-arm64
             arch: arm64
+            require_overmount: ""
           - os: macos-15-intel
             label: macos-x86_64
             arch: x86_64
+            require_overmount: ""
     steps:
       - uses: actions/checkout@v4
       - name: Confirm architecture
@@ -39,7 +42,11 @@ jobs:
         run: |
           python -m ruff check src tests
           python -m ruff format --check src tests
+      - name: Allow unprivileged user namespaces
+        if: matrix.label == 'linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Test
         env:
           REWIND_EXPECT_MACHINE: ${{ matrix.arch }}
-        run: python -m pytest
+          REWIND_REQUIRE_LIVE_OVERMOUNT: ${{ matrix.require_overmount }}
+        run: python -m pytest -rs

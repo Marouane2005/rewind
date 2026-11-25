@@ -2,7 +2,9 @@
 
 REWIND is a transactional recovery and reconciliation proxy for MCP agents. It sits between an MCP client and one MCP server over stdio. Its long-term purpose is to preserve evidence about tool calls that may cause external side effects, so an uncertain outcome can be investigated instead of being blindly retried.
 
-This repository is the Phase 1 foundation. It implements the stdio proxy, filesystem checks, a fenced SQLite journal, and strict contract loading. It does not recover, retry, reconcile, or execute compensation.
+This repository is the MCP proxy (phase 1). It implements the stdio proxy, filesystem checks, the local fenced SQLite journal that the proxy uses, and strict contract loading. It does not recover, retry, reconcile, or execute compensation.
+
+Phase names: 0 research, 1 MCP proxy, 2 durable journal, 3 reconciliation, 4 deterministic chaos benchmark, 5 verified compensation, 6 release. Phase 2 has not started.
 
 REWIND does not provide exactly-once execution. A proxy cannot do that when the upstream system has no idempotency, lookup, or reconciliation support. If the outcome is not known, the journal state is `IN_DOUBT`.
 
@@ -77,6 +79,7 @@ Unknown tools are denied. A mutating tool whose outcome cannot be verified must 
 
 ## Limitations
 
+- No exactly-once execution. A proxy cannot provide that without upstream idempotency or reconciliation, and this build does not retry.
 - No recovery engine, retry engine, reconciliation runtime, or compensation execution.
 - No Streamable HTTP, SSE, dashboard, or multi-tenant control plane.
 - Cancellation is forwarded. That does not prove the side effect was cancelled or rolled back.
@@ -84,7 +87,8 @@ Unknown tools are denied. A mutating tool whose outcome cannot be verified must 
 - A crash between the intent record and a completed response can leave a non-terminal row. Phase 1 will not decide that row for you.
 - Semantic JSON transparency is required. Byte-for-byte transparency is not, because frames are decoded and re-serialized.
 - The single-writer fence protects processes that use this library. A program that writes the SQLite file directly bypasses it. Database and lock files are created mode `0600`.
-- Live macOS `fstatfs` is implemented and skipped when the host is not Darwin. One macOS architecture passing later does not verify the other.
+- An upstream response is not a completed journal record until `RESPONSE_OBSERVED` commits with its evidence. A failed evidence write is reported as `-32603` / `EVIDENCE_NOT_RECORDED` and the row stays non-terminal (`IN_DOUBT` when that follow-up write commits).
+- Live macOS `fstatfs` runs only on Darwin. Linux skips it. arm64 and x86_64 are separate CI runners; one of them passing does not verify the other until that runner has passed too.
 
 ## Development
 

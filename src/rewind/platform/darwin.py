@@ -1,10 +1,17 @@
 """Darwin filesystem validation.
 
-This path never reads Linux /proc and never shells out to df. The statfs
-layout below is the ABI required by the phase 1 specification. It is checked
-before use. A mismatch raises DarwinAbiError instead of silently changing
-the structure. Live fstatfs has to be executed on Darwin; this module does
-not claim that both arm64 and x86_64 have been verified by a given host.
+This path never reads Linux /proc and never shells out to df. The structure
+matches ``__DARWIN_STRUCT_STATFS64`` in XNU ``bsd/sys/mount.h`` (tag
+``xnu-11215.81.4``). On 64-bit Darwin, ``struct statfs`` is that layout and
+``fstatfs`` is the ``__DARWIN_INODE64`` symbol. ``MAXPATHLEN`` is ``PATH_MAX``
+from ``bsd/sys/param.h``; Darwin's ``PATH_MAX`` is 1024 (``bsd/sys/syslimits.h``).
+``f_fsid`` is two ``int32_t`` values and ``f_owner`` is a 32-bit ``uid_t``.
+
+With that field list and natural LP64 alignment the name fields sit at
+offsets 72, 88, and 1112, ``f_flags_ext`` at 2136, ``f_reserved`` at 2140,
+and the structure is 2168 bytes. A mismatch raises ``DarwinAbiError`` instead
+of silently changing the structure. Live ``fstatfs`` still has to be executed
+on each Darwin architecture before that architecture is called verified.
 """
 
 from __future__ import annotations

@@ -108,6 +108,13 @@ def _named(name: bytes) -> DarwinStatfs64:
 def test_d13_live_fstatfs_records_machine(tmp_path: Path) -> None:
     from rewind.platform.filesystem import validate_database_directory
 
+    size, offsets = assert_darwin_layout()
+    assert size == 2168
+    assert offsets["f_fstypename"] == 72
+    assert offsets["f_mntonname"] == 88
+    assert offsets["f_mntfromname"] == 1112
+    assert offsets["f_flags_ext"] == 2136
+    assert offsets["f_reserved"] == 2140
     report = validate_database_directory(tmp_path / "journal.sqlite")
     assert report.system == "Darwin"
     assert report.machine == platform.machine()

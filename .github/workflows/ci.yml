@@ -7,12 +7,18 @@ on:
 
 jobs:
   lint-and-test:
-    name: ${{ matrix.os }}
+    name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            label: linux
+          - os: macos-14
+            label: macos-arm64
+          - os: macos-13
+            label: macos-x86_64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

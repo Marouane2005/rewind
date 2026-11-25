@@ -25,6 +25,7 @@ from rewind.errors import (
     JournalError,
     LeaseBusyError,
     LeaseError,
+    StateTransitionError,
 )
 from rewind.journal.integrity import (
     build_reference_connection,
@@ -84,6 +85,10 @@ class Journal:
         self._conn: sqlite3.Connection | None = None
         self._lock_fd: int | None = None
         self._lock_path: Path | None = None
+        self._injected_mutation_error: BaseException | None = None
+        self._injected_mutation_skip = 0
+        self._owns_lock = True
+        self.after_fence: Any = None
 
     @classmethod
     def open(
@@ -93,6 +98,7 @@ class Journal:
         allow_tmpfs: bool = False,
         create: bool = True,
         ddl_failure_at: int | None = None,
+        check_same_thread: bool = True,
     ) -> Journal:
         path = Path(db_path)
         if path.exists() and not path.is_file():
@@ -107,7 +113,11 @@ class Journal:
         journal.filesystem = report
         journal._lock_path = Path(str(path) + ".lock")
         try:
-            journal._open_locked(create=create, ddl_failure_at=ddl_failure_at)
+            journal._open_locked(
+                create=create,
+                ddl_failure_at=ddl_failure_at,
+                check_same_thread=check_same_thread,
+            )
         except Exception:
             journal.close()
             raise
@@ -121,7 +131,7 @@ class Journal:
         self.token = None
         if connection is not None:
             connection.close()
-        if lock_fd is not None:
+        if lock_fd is not None and self._owns_lock:
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
             finally:
@@ -150,11 +160,62 @@ class Journal:
         conn.execute("BEGIN IMMEDIATE")
         try:
             self._assert_fence_row(conn)
+            if self.after_fence is not None:
+                self.after_fence()
+            injected = self._injected_mutation_error
+            if injected is not None:
+                if self._injected_mutation_skip > 0:
+                    self._injected_mutation_skip -= 1
+                else:
+                    self._injected_mutation_error = None
+                    self._injected_mutation_skip = 0
+                    raise injected
             yield conn
             conn.execute("COMMIT")
         except Exception:
             _rollback(conn)
             raise
+
+    def fail_next_mutation(self, exc: BaseException, *, after: int = 0) -> None:
+        """Fail one fenced write after the epoch check, before any change.
+
+        ``after`` lets that many later writes commit first. The failed
+        transaction rolls back. Tests use this to inject disk, busy, and
+        constraint failures without a sleep.
+        """
+
+        if after < 0:
+            raise ValueError("after must be zero or positive")
+        self._injected_mutation_error = exc
+        self._injected_mutation_skip = after
+
+    def sibling_writer(self) -> Journal:
+        """Open a second connection on this process's lease.
+
+        The sibling does not take another flock and does not release the lease
+        when it is closed. Two connections are what a conditional transition
+        race needs; threads cannot share one SQLite connection's transaction.
+        """
+
+        if self._conn is None or self.db_path is None or self._lock_fd is None:
+            raise LeaseError("journal is closed")
+        sibling = Journal()
+        sibling.db_path = self.db_path
+        sibling.filesystem = self.filesystem
+        sibling.epoch = self.epoch
+        sibling.token = self.token
+        sibling.lock_dev = self.lock_dev
+        sibling.lock_ino = self.lock_ino
+        sibling._lock_path = self._lock_path
+        sibling._lock_fd = self._lock_fd
+        sibling._owns_lock = False
+        sibling._conn = sqlite3.connect(
+            self.db_path,
+            isolation_level=None,
+            check_same_thread=False,
+        )
+        _configure_pragmas(sibling._conn)
+        return sibling
 
     def record_proxy_session(self, *, session_id: str, tx_id: str) -> None:
         now = utc_now()
@@ -218,21 +279,35 @@ class Journal:
         event_type: str,
         evidence_kind: str | None = None,
         payload_sha256: str | None = None,
-        only_from: str | None = None,
+        only_from: str | tuple[str, ...] | None = None,
     ) -> None:
+        """Change state and append the event in one fenced transaction.
+
+        ``only_from`` is the state, or states, the row must still have. The
+        conditional update and the event insert commit together. If the
+        expected state does not match, nothing is written and
+        ``StateTransitionError`` is raised.
+        """
+
         with self.write() as conn:
             sql = "UPDATE tool_calls SET state = ? WHERE call_id = ? AND tx_id = ?"
             params: list[Any] = [state, call_id, tx_id]
-            if only_from is not None:
+            if isinstance(only_from, str):
                 sql += " AND state = ?"
                 params.append(only_from)
-            conn.execute(sql, params)
-            exists = conn.execute(
-                "SELECT 1 FROM tool_calls WHERE call_id = ? AND tx_id = ?",
-                (call_id, tx_id),
-            ).fetchone()
-            if exists is None:
-                raise JournalError("tool call row is missing")
+            elif only_from is not None:
+                marks = ", ".join("?" for _ in only_from)
+                sql += f" AND state IN ({marks})"
+                params.extend(only_from)
+            updated = conn.execute(sql, params)
+            if updated.rowcount != 1:
+                exists = conn.execute(
+                    "SELECT state FROM tool_calls WHERE call_id = ? AND tx_id = ?",
+                    (call_id, tx_id),
+                ).fetchone()
+                if exists is None:
+                    raise JournalError("tool call row is missing")
+                raise StateTransitionError(f"refusing transition to {state}; current state is {exists[0]}")
             _append_event(conn, call_id, tx_id, event_type, evidence_kind, payload_sha256)
 
     def status(self) -> dict[str, Any]:
@@ -286,7 +361,7 @@ class Journal:
             },
         }
 
-    def _open_locked(self, *, create: bool, ddl_failure_at: int | None) -> None:
+    def _open_locked(self, *, create: bool, ddl_failure_at: int | None, check_same_thread: bool) -> None:
         assert self._lock_path is not None
         assert self.db_path is not None
         previous_umask = os.umask(0o077)
@@ -298,7 +373,11 @@ class Journal:
                 raise LeaseBusyError(f"journal lock is held: {self._lock_path}") from exc
             os.fchmod(self._lock_fd, 0o600)
             self._assert_lock_inode()
-            self._conn = sqlite3.connect(self.db_path, isolation_level=None)
+            self._conn = sqlite3.connect(
+                self.db_path,
+                isolation_level=None,
+                check_same_thread=check_same_thread,
+            )
             os.chmod(self.db_path, 0o600)
         finally:
             os.umask(previous_umask)

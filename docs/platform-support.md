@@ -21,7 +21,7 @@ Mount ids must be positive and unique. `parent_id` may be 0 because some kernels
 
 ## macOS
 
-Darwin uses `fstatfs` through `ctypes` and never reads `/proc` or runs `df`. The structure is the 2168-byte layout required by the Phase 1 specification, with field offsets 72, 88, 1112, 2136, and 2140. If ctypes does not produce that layout, `DarwinAbiError` is raised and the layout is not edited at runtime.
+Darwin uses `fstatfs` through `ctypes` and never reads `/proc` or runs `df`. The structure is `__DARWIN_STRUCT_STATFS64` from XNU `bsd/sys/mount.h` at tag `xnu-11215.81.4` (https://github.com/apple-oss-distributions/xnu/blob/xnu-11215.81.4/bsd/sys/mount.h). On 64-bit Darwin that macro is `struct statfs`, and `fstatfs` is the `__DARWIN_INODE64` entry. `MAXPATHLEN` is `PATH_MAX` (`bsd/sys/param.h`); Darwin defines `PATH_MAX` as 1024. The resulting LP64 layout is 2168 bytes, with `f_fstypename` at 72, `f_mntonname` at 88, `f_mntfromname` at 1112, `f_flags_ext` at 2136, and `f_reserved` at 2140. If ctypes does not produce that layout, `DarwinAbiError` is raised and the layout is not edited at runtime.
 
 Names are taken from the fixed buffers only when a NUL is present, and they are decoded as strict UTF-8. The descriptor is closed on success and on failure.
 

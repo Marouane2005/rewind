@@ -38,7 +38,7 @@ Subprocess tests launch `python -m rewind` and `tests/support/fake_upstream.py`.
 
 ## CI
 
-GitHub Actions runs lint and pytest on `ubuntu-latest`, `macos-14` (arm64), and `macos-13` (x86_64). Live `fstatfs` runs on the Darwin jobs and is skipped on Linux. A pass on one macOS architecture does not stand in for the other.
+GitHub Actions runs lint and pytest on `ubuntu-latest`, `macos-15` (arm64), and `macos-15-intel` (x86_64). `fail-fast` is off. Each job checks `uname -m` against that architecture before the tests. `REWIND_EXPECT_MACHINE` makes the live Darwin `fstatfs` test require the same machine string. That test runs only on Darwin and is skipped on Linux. A pass on one macOS architecture does not stand in for the other. `macos-14` and `macos-13` are retired images and are not used.
 
 ## Platform tests
 

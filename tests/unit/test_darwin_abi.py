@@ -119,6 +119,9 @@ def test_d13_live_fstatfs_records_machine(tmp_path: Path) -> None:
     assert report.system == "Darwin"
     assert report.machine == platform.machine()
     assert report.machine in {"arm64", "x86_64"}
+    expected = os.environ.get("REWIND_EXPECT_MACHINE")
+    if expected:
+        assert report.machine == expected
     assert report.fs_type in {"apfs", "hfs", "ufs", "zfs", "tmpfs"}
 
 

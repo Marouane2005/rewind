@@ -88,7 +88,8 @@ Unknown tools are denied. A mutating tool whose outcome cannot be verified must 
 - Semantic JSON transparency is required. Byte-for-byte transparency is not, because frames are decoded and re-serialized.
 - The single-writer fence protects processes that use this library. A program that writes the SQLite file directly bypasses it. Database and lock files are created mode `0600`.
 - An upstream response is not a completed journal record until `RESPONSE_OBSERVED` commits with its evidence. A failed evidence write is reported as `-32603` / `EVIDENCE_NOT_RECORDED` and the row stays non-terminal (`IN_DOUBT` when that follow-up write commits).
-- Live macOS `fstatfs` runs only on Darwin. Linux skips it. The `macos-15` and `macos-15-intel` jobs each run it. A pass on one architecture is not a pass on the other.
+- CI runs `ubuntu-latest` (x86_64), `macos-15` (arm64), and `macos-15-intel` (x86_64). Live macOS `fstatfs` runs on the two macOS jobs and is skipped on Linux. A pass on one architecture is not a pass on the other.
+- P1–P9, P11–P21, and D1–D6 are UNRESOLVED / SPECIFICATION DETAIL MISSING.
 
 ## Development
 

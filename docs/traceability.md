@@ -1,6 +1,6 @@
 # Traceability
 
-Baseline: the written design under `docs/design-baseline/`, frozen at merge commit `cb2535b`.
+The written design is `docs/design-baseline/`, as merged in `cb2535b`. This branch is not merged yet.
 
 Only P10, P22, and D7–D13 have acceptance bullets there. P1–P9, P11–P21, and D1–D6 are UNRESOLVED / SPECIFICATION DETAIL MISSING. This matrix does not invent definitions for them.
 
@@ -39,7 +39,7 @@ Only P10, P22, and D7–D13 have acceptance bullets there. P1–P9, P11–P21, a
 | D9 | Direct | `test_d9_atomic_bootstrap` raises `InjectedDDLFailure` and asserts zero user objects remain. `test_schema_splits_trigger_bodies_and_has_no_pragma` asserts no `PRAGMA` in `schema.sql`, 21 statements, 8 triggers, and that the adjustment trigger is one complete statement. |
 | D10 | Direct | `test_d10_composite_parent_fk` asserts a same-transaction parent insert succeeds and both a cross-transaction parent and a self-parent raise `IntegrityError`. |
 | D11 | Direct on Linux | `PHASE_1_SCOPE_AND_ACCEPTANCE.md` lines 83–85. `test_d11_hidden_descendant_uses_descriptor_mount_id` keeps the synthetic case: mount id 55 is `nfs` and is rejected, while id 41 stays `ext4`. `test_d11_live_overmount_rejects_hidden_descendant` runs `unshare -Urm`, bind-mounts a directory, hides that mount and a nested bind under tmpfs, and asserts the open fd's mount id is the covering tmpfs, which `validate_linux` rejects. The hidden mounts remain in mountinfo with different ids. The test skips only when `unshare` is missing or the namespace is not permitted, and that skip is not a pass. Linux CI sets `REWIND_REQUIRE_LIVE_OVERMOUNT=1`, which turns that skip into a failure. It is not Direct on a host where it skipped. |
-| D12 | Direct | `test_d12_opath_execute_only_directory` asserts `os.listdir` raises `PermissionError` on mode `0111`, `O_PATH` returns a positive mount id, and the descriptor count is unchanged. `test_missing_o_path_fails_closed` asserts `UnsupportedPlatformError` when `O_PATH` is absent. Linux only; both tests are skipped on Darwin. |
+| D12 | Direct on Linux | `test_d12_opath_execute_only_directory` asserts `os.listdir` raises `PermissionError` on mode `0111`, `O_PATH` returns a positive mount id, and the descriptor count is unchanged. `test_missing_o_path_fails_closed` asserts `UnsupportedPlatformError` when `O_PATH` is absent. Linux only; both tests are skipped on Darwin. |
 | D13 | Direct | `test_d13_layout_matches_required_abi` asserts size 2168, the documented offsets, and the field types and array lengths from `__DARWIN_STRUCT_STATFS64`. `test_d13_fixed_buffers_require_nul_and_utf8` asserts NUL and UTF-8 failures. `test_d13_fstatfs_errno_and_fd_closure` asserts errno 5 and descriptor closure. `test_fstatfs_symbol_is_selected_per_architecture` asserts `fstatfs` on arm64 and `fstatfs$INODE64` then `fstatfs64` on x86_64, and that the plain x86_64 symbol is not used. `test_d13_live_fstatfs_records_machine` calls live `fstatfs` and checks `platform.machine()`; it runs only on Darwin. `f_flags` is not an allowlist input. |
 
 Direct means the written bullets for that id are asserted by the tests named above. A green suite does not turn an unresolved id into a pass, and a skipped live test is not Direct on that host.

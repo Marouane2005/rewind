@@ -1,6 +1,6 @@
 # Phase 1 acceptance
 
-Baseline frozen at merge commit `cb2535b` on `main`. The written design is `docs/design-baseline/`. This note does not move that baseline.
+The written design is `docs/design-baseline/`, as merged in `cb2535b`. This note does not move that design. Merge of this branch is still pending.
 
 Names used from here on:
 
@@ -26,13 +26,13 @@ There is no exactly-once claim.
 | D8 compensation accounting | Direct | `test_d8_compensation_adjustments`, `test_compensation_terminal_rules` |
 | D9 atomic bootstrap | Direct | `test_d9_atomic_bootstrap`, `test_schema_splits_trigger_bodies_and_has_no_pragma` |
 | D10 composite parent key | Direct | `test_d10_composite_parent_fk` |
-| D11 hidden descendant mount | Direct on Linux | Synthetic test kept. `test_d11_live_overmount_rejects_hidden_descendant` is the live overmount. A skip is not a pass. |
+| D11 hidden descendant mount | Direct on Linux | Synthetic test kept. `test_d11_live_overmount_rejects_hidden_descendant` is the live overmount. On Linux CI that test is required (`REWIND_REQUIRE_LIVE_OVERMOUNT=1`): if it is skipped, the Linux job fails. A skip elsewhere is not a pass. |
 | D12 Linux `O_PATH` | Direct on Linux | `test_d12_opath_execute_only_directory`, `test_missing_o_path_fails_closed`. Skipped on Darwin. |
 | D13 Darwin ABI and live `fstatfs` | Direct | Layout, field types, NUL, UTF-8, errno, descriptor closure, and per-architecture symbol selection. Live `fstatfs` runs only on Darwin. |
 | Atomic state transitions | Direct | `tests/integration/test_state_transitions.py` |
 | Evidence write failure is not completion | Direct | `test_response_write_failure_is_not_completion` and `test_both_evidence_writes_fail_closed` |
 
-P1–P9, P11–P21, and D1–D6 are undefined in the baseline. They are not passed.
+P1–P9, P11–P21, and D1–D6 are UNRESOLVED / SPECIFICATION DETAIL MISSING. They are not passed.
 
 ## Known limitations
 
@@ -41,5 +41,5 @@ P1–P9, P11–P21, and D1–D6 are undefined in the baseline. They are not pass
 - A crash can leave `INTENT_RECORDED` or `FORWARDED`. This build does not classify those rows on the next open.
 - Cancellation forwarded upstream is not proof the side effect stopped. If the journal write for `CANCEL_REQUESTED` fails, the notification was still forwarded and the row is unchanged.
 - The flock is the single-writer lease. A program that opens the SQLite file directly bypasses it.
-- `D12` does not run on macOS. The live D11 overmount runs only where a user and mount namespace is permitted.
+- `D12` does not run on macOS. On Linux CI the live overmount test is required (`REWIND_REQUIRE_LIVE_OVERMOUNT=1`), and if it is skipped the Linux job fails. Elsewhere it runs only where a user and mount namespace is permitted.
 - Darwin `fstatfs` is verified only on the Darwin CI runners that executed `test_d13_live_fstatfs_records_machine`. A pass on one architecture is not a pass on the other.
